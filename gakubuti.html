@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Framed 3D Book Experience</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;700&display=swap');
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            font-family: 'Inter', 'Noto Sans JP', sans-serif;
+            overflow: hidden;
+        }
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: background 0.5s ease;
+        }
+        #scene-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+        }
+        #book-info {
+            position: absolute;
+            left: 5%;
+            top: 50%;
+            transform: translateY(-50%);
+            background: rgba(255,255,255,0.9);
+            padding: 2rem;
+            border-radius: 1rem;
+            max-width: 300px;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        #buy-button {
+            position: absolute;
+            bottom: 5%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 1rem 2rem;
+            border-radius: 2rem;
+            cursor: pointer;
+            font-size: 1.2em;
+            opacity: 0;
+            transition: opacity 0.3s ease, background 0.3s ease;
+        }
+        #buy-button:hover {
+            background: #45a049;
+        }
+        #theme-toggle, #lang-toggle, #prev-book, #next-book {
+            position: absolute;
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            z-index: 10;
+            padding: 10px;
+        }
+        #theme-toggle { top: 20px; right: 20px; }
+        #lang-toggle { top: 20px; right: 60px; }
+        #prev-book { top: 50%; left: 20px; transform: translateY(-50%); }
+        #next-book { top: 50%; right: 20px; transform: translateY(-50%); }
+    </style>
+</head>
+<body>
+    <div id="scene-container"></div>
+    <div id="book-info"></div>
+    <button id="buy-button">Add to Cart</button>
+    <button id="theme-toggle">🌓</button>
+    <button id="lang-toggle">🌐</button>
+    <button id="prev-book">◀</button>
+    <button id="next-book">▶</button>
+
+    <script>
+        let scene, camera, renderer, book;
+        let isDragging = false;
+        let previousMousePosition = { x: 0, y: 0 };
+        let currentLanguage = 'en';
+        let currentBookIndex = 0;
+        
+        // Frame dimensions
+        const FRAME_INNER_WIDTH = 20.32; // cm
+        const FRAME_INNER_HEIGHT = 25.4; // cm
+        const FRAME_OUTER_WIDTH = 30.48; // cm
+        const FRAME_OUTER_HEIGHT = 35.56; // cm
+        const FRAME_DEPTH = 4.44; // cm
+
+        // Book dimensions (adjusted to fit inside the frame)
+        const BOOK_WIDTH = 19; // cm (leaving some space inside the frame)
+        const BOOK_HEIGHT = 24; // cm (leaving some space inside the frame)
+        const BOOK_THICKNESS = 3; // cm (adjusted to fit within frame depth)
+        const COVER_THICKNESS = 0.5; // cm
+
+        let books = [
+            {
+                title: "To Those Who Will Become Wizards",
+                titleJa: "魔法使いになる者たちへ",
+                author: "Custom Author",
+                authorJa: "カスタム著者",
+                description: "A mystical journey into the world of magic and wizardry.",
+                descriptionJa: "魔法と魔術の世界への神秘的な旅。",
+                price: "$59.99",
+                priceJa: "￥6,599",
+                pages: 450,
+                coverColor: 0x8B0000,
+                spineColor: 0x8B0000,
+                backgroundColor: "linear-gradient(135deg, #8B0000 0%, #800000 100%)",
+                coverImage: "https://i.postimg.cc/t44vCr1t/2024-07-08-144024.png",
+                backCoverImage: "https://i.postimg.cc/gjc8q7bg/2024-07-08-144438.png"
+            },
+            // ... 他の本のデータ ...
+        ];
+
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.getElementById('scene-container').appendChild(renderer.domElement);
+
+            createBook();
+            setupLighting();
+            setupEventListeners();
+            animate();
+            updateBookInfo();
+            updateBackground();
+            adjustCamera();
+        }
+
+        function createBook() {
+            if (book) scene.remove(book);
+
+            book = new THREE.Group();
+
+            const currentBook = books[currentBookIndex];
+
+            // Create pages
+            const pageWidth = BOOK_WIDTH - (COVER_THICKNESS * 2);
+            const pageHeight = BOOK_HEIGHT - (COVER_THICKNESS * 2);
+            const pageThickness = BOOK_THICKNESS - (COVER_THICKNESS * 2);
+            const pageGeometry = new THREE.BoxGeometry(pageWidth, pageHeight, pageThickness);
+            const pageMaterial = new THREE.MeshPhongMaterial({ color: 0xffffff });
+            const pages = new THREE.Mesh(pageGeometry, pageMaterial);
+
+            // Create front cover
+            const coverGeometry = new THREE.BoxGeometry(BOOK_WIDTH, BOOK_HEIGHT, COVER_THICKNESS);
+            const coverMaterials = createBookMaterials();
+            const frontCover = new THREE.Mesh(coverGeometry, coverMaterials);
+            frontCover.position.z = (BOOK_THICKNESS / 2) - (COVER_THICKNESS / 2);
+
+            // Create back cover
+            const backCoverMaterials = createBackCoverMaterials();
+            const backCover = new THREE.Mesh(coverGeometry, backCoverMaterials);
+            backCover.position.z = -(BOOK_THICKNESS / 2) + (COVER_THICKNESS / 2);
+
+            // Create spine
+            const spineGeometry = new THREE.BoxGeometry(COVER_THICKNESS, BOOK_HEIGHT, BOOK_THICKNESS);
+            const spineMaterial = new THREE.MeshPhongMaterial({
+                map: createSpineTexture(),
+                color: currentBook.spineColor,
+                bumpScale: 0.01,
+                specular: 0x111111,
+                shininess: 10
+            });
+            const spine = new THREE.Mesh(spineGeometry, spineMaterial);
+            spine.position.x = -(BOOK_WIDTH / 2) + (COVER_THICKNESS / 2);
+
+            // Create frame
+            const frameGroup = createFrame();
+
+            book.add(pages);
+            book.add(frontCover);
+            book.add(backCover);
+            book.add(spine);
+            book.add(frameGroup);
+
+            // Position the book within the frame
+            book.position.z = FRAME_DEPTH / 2 - BOOK_THICKNESS / 2;
+
+            scene.add(book);
+        }
+
+        function createFrame() {
+            const frameGroup = new THREE.Group();
+
+            // Frame material
+            const frameMaterial = new THREE.MeshPhongMaterial({
+                color: 0xD4AF37,  // Gold color
+                specular: 0x111111,
+                shininess: 100
+            });
+
+            // Outer frame
+            const outerFrameGeometry = new THREE.BoxGeometry(FRAME_OUTER_WIDTH, FRAME_OUTER_HEIGHT, FRAME_DEPTH);
+            const outerFrame = new THREE.Mesh(outerFrameGeometry, frameMaterial);
+            frameGroup.add(outerFrame);
+
+            // Inner frame (to create the opening)
+            const innerFrameGeometry = new THREE.BoxGeometry(FRAME_INNER_WIDTH, FRAME_INNER_HEIGHT, FRAME_DEPTH + 0.1);
+            const innerFrame = new THREE.Mesh(innerFrameGeometry, new THREE.MeshBasicMaterial({ color: 0x000000 }));
+            innerFrame.position.z = 0.05;  // Slight offset to avoid z-fighting
+            frameGroup.add(innerFrame);
+
+            // Create frame details
+            const detailGeometry = new THREE.BoxGeometry(FRAME_OUTER_WIDTH - 1, FRAME_OUTER_HEIGHT - 1, 0.5);
+            const detailMesh = new THREE.Mesh(detailGeometry, new THREE.MeshPhongMaterial({ color: 0xFFD700 }));
+            detailMesh.position.z = FRAME_DEPTH / 2 + 0.2;
+            frameGroup.add(detailMesh);
+
+            return frameGroup;
+        }
+
+        function createBookMaterials() {
+            const loader = new THREE.TextureLoader();
+            const currentBook = books[currentBookIndex];
+            
+            const coverTexture = loader.load(currentBook.coverImage);
+            coverTexture.wrapS = THREE.ClampToEdgeWrapping;
+            coverTexture.wrapT = THREE.ClampToEdgeWrapping;
+
+            const coverMaterial = new THREE.MeshPhongMaterial({
+                map: coverTexture,
+                bumpMap: coverTexture,
+                bumpScale: 0.02,
+                specular: 0x111111,
+                shininess: 10
+            });
+
+            return [
+                new THREE.MeshPhongMaterial({ color: currentBook.coverColor }),  // 右側
+                new THREE.MeshPhongMaterial({ color: currentBook.coverColor }),  // 左側
+                new THREE.MeshPhongMaterial({ color: currentBook.coverColor }),  // 上側
+                new THREE.MeshPhongMaterial({ color: currentBook.coverColor }),  // 下側
+                coverMaterial,  // 前面（表紙）
+                new THREE.MeshPhongMaterial({ color: currentBook.coverColor })   // 背面（裏表紙）
+            ];
+        }
+
+        function createBackCoverMaterials() {
+            const loader = new THREE.TextureLoader();
+            const currentBook = books[currentBookIndex];
+            
+            const backCoverTexture = loader.load(currentBook.backCoverImage);
+            backCoverTexture.wrapS = THREE.ClampToEdgeWrapping;
+            backCoverTexture.wrapT = THREE.ClampToEdgeWrapping;
+
+            const backCoverMaterial = new THREE.MeshPhongMaterial({
+                map: backCoverTexture,
+                bumpMap: backCoverTexture,
+                bumpScale: 0.02,
+                specular: 0x111111,
+                shininess: 10
+            });
+
+            return [
+                new THREE.MeshPhongMaterial({ color: currentBook.coverColor }),  // 右側
+                new THREE.MeshPhongMaterial({ color: currentBook.coverColor }),  // 左側
+                new THREE.MeshPhongMaterial({ color: currentBook.coverColor }),  // 上側
+                new THREE.MeshPhongMaterial({ color: currentBook.coverColor }),  // 下側
+                new THREE.MeshPhongMaterial({ color: currentBook.coverColor }),  // 前面
+                backCoverMaterial  // 背面（裏表紙）
+            ];
+        }
+
+        function createSpineTexture() {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = 512;
+            canvas.height = 2048;
+
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.font = 'bold 80px Arial';
+            ctx.fillStyle = '#000000';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.save();
+            ctx.translate(canvas.width / 2, canvas.height / 2);
+            ctx.rotate(-Math.PI / 2);
+            const title = books[currentBookIndex].title.split(':');
+            ctx.fillText(title[0], 0, -150);
+            if (title[1]) {
+                ctx.fillText(title[1], 0, 150);
+            }
+            ctx.restore();
+
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        function setupLighting() {
+            scene.remove(...scene.children.filter(child => child instanceof THREE.Light));
+
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+
+            const directionalLight1 = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight1.position.set(1, 1, 1);
+            scene.add(directionalLight1);
+
+            const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.5);
+            directionalLight2.position.set(-1, -1, -1);
+            scene.add(directionalLight2);
+
+            const pointLight = new THREE.PointLight(0xffffff, 0.5);
+            pointLight.position.set(0, 0, 10);
+            scene.add(pointLight);
+        }
+
+        function setupEventListeners() {
+            document.addEventListener('mousedown', onMouseDown);
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+            window.addEventListener('resize', onWindowResize, false);
+            document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
+            document.getElementById('lang-toggle').addEventListener('click', toggleLanguage);
+            document.getElementById('prev-book').addEventListener('click', () => changeBook(-1));
+            document.getElementById('next-book').addEventListener('click', () => changeBook(1));
+            document.getElementById('buy-button').addEventListener('click', addToCart);
+        }
+
+        function onMouseDown(event) {
+            isDragging = true;
+            previousMousePosition = {
+                x: event.clientX,
+                y: event.clientY
+            };
+        }
+
+        function onMouseMove(event) {
+            if (!isDragging) return;
+
+            const deltaMove = {
+                x: event.clientX - previousMousePosition.x,
+                y: event.clientY - previousMousePosition.y
+            };
+
+            const rotationSpeed = 0.005;
+
+            book.rotation.y += deltaMove.x * rotationSpeed;
+            book.rotation.x += deltaMove.y * rotationSpeed;
+
+            previousMousePosition = {
+                x: event.clientX,
+                y: event.clientY
+            };
+
+            updateBookInfo();
+        }
+
+        function onMouseUp(event) {
+            isDragging = false;
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            TWEEN.update();
+
+            if (!isDragging) {
+                book.rotation.y += 0.005;  // Soft rotation when not being dragged
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function toggleTheme() {
+            document.body.classList.toggle('dark-theme');
+            updateBookInfo();
+        }
+
+        function toggleLanguage() {
+            currentLanguage = currentLanguage === 'en' ? 'ja' : 'en';
+            updateBookInfo();
+            updateButtonLanguage();
+        }
+
+        function updateButtonLanguage() {
+            const buyButton = document.getElementById('buy-button');
+            buyButton.textContent = currentLanguage === 'en' ? 'Add to Cart' : 'カートに追加';
+        }
+
+        function updateBookInfo() {
+            const bookInfoElement = document.getElementById('book-info');
+            const buyButton = document.getElementById('buy-button');
+            const currentBook = books[currentBookIndex];
+
+            if (book.rotation.y > -Math.PI / 4 && book.rotation.y < Math.PI / 4) {
+                bookInfoElement.innerHTML = `
+                    <h2>${currentLanguage === 'en' ? currentBook.title : currentBook.titleJa}</h2>
+                    <p>${currentLanguage === 'en' ? 'By ' + currentBook.author : '著者：' + currentBook.authorJa}</p>
+                    <p>${currentLanguage === 'en' ? currentBook.description : currentBook.descriptionJa}</p>
+                    <p>${currentLanguage === 'en' ? currentBook.price : currentBook.priceJa}</p>
+                `;
+                bookInfoElement.style.opacity = 1;
+                buyButton.style.opacity = 1;
+            } else {
+                bookInfoElement.style.opacity = 0;
+                buyButton.style.opacity = 0;
+            }
+
+            updateButtonLanguage();
+        }
+
+        function changeBook(direction) {
+            const oldBook = book;
+            currentBookIndex = (currentBookIndex + direction + books.length) % books.length;
+
+            new TWEEN.Tween(oldBook.position)
+                .to({ x: direction > 0 ? -5 : 5 }, 500)
+                .easing(TWEEN.Easing.Quadratic.In)
+                .onComplete(() => {
+                    scene.remove(oldBook);
+                    createBook();
+                })
+                .start();
+
+            new TWEEN.Tween(oldBook.rotation)
+                .to({ y: direction > 0 ? Math.PI / 2 : -Math.PI / 2 }, 500)
+                .easing(TWEEN.Easing.Quadratic.In)
+                .start();
+
+            updateBackground();
+        }
+
+        function updateBackground() {
+            document.body.style.background = books[currentBookIndex].backgroundColor;
+        }
+
+        function addToCart() {
+            alert(currentLanguage === 'en' ? "Added to cart!" : "カートに追加されました！");
+        }
+
+        function adjustCamera() {
+            camera.position.z = 50;  // Adjusted to view the entire framed book
+            camera.lookAt(scene.position);
+        }
+
+        init();
+    </script>
+</body>
+</html>
